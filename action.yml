@@ -1,0 +1,22 @@
+name: Release Link Check
+description: Verify GitHub Release download URLs in documentation and install commands
+branding:
+  icon: link
+  color: green
+inputs:
+  files:
+    description: Paths to UTF-8 files, one per line
+    default: README.md
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        RELEASE_LINK_CHECK_FILES: ${{ inputs.files }}
+      run: |
+        files=()
+        while IFS= read -r file; do
+          file="${file%$'\r'}"
+          if [[ -n "$file" ]]; then files+=("$file"); fi
+        done <<< "$RELEASE_LINK_CHECK_FILES"
+        python "$GITHUB_ACTION_PATH/release_link_check.py" -- "${files[@]}"
