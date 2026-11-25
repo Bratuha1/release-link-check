@@ -1,5 +1,6 @@
 import contextlib
 from io import StringIO
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
 import unittest
@@ -7,7 +8,8 @@ from unittest.mock import Mock, call, patch
 from urllib.request import Request
 
 from release_link_check import (
-    CheckError, GitHub, GitHubRedirect, Link, Release, find_links, main, validate,
+    CheckError, GitHub, GitHubRedirect, Link, Release, ReleaseNotFound,
+    annotate, find_links, main, validate,
 )
 
 
@@ -42,6 +44,44 @@ class LinkTests(unittest.TestCase):
             call("Owner/Tool", "123"), call("Owner/Tool", "tags/builds%2Fv1"),
         ])
 
+    def test_shell_variables_do_not_become_truncated_download_urls(self):
+        text = "\n".join([
+            'curl "https://github.com/Owner/Tool/releases/download/$VERSION/App.zip"',
+            'curl "https://github.com/Owner/Tool/releases/latest/download/App-${ARCH}.zip"',
+            'curl "https://github.com/Owner/Tool/releases/latest/download/App-$(uname -m).zip"',
+            'curl "https://github.com/Owner/Tool/releases/latest/download/App%24special.zip"',
+        ])
+        self.assertEqual(list(find_links(Path("README.md"), text)), [
+            Link(Path("README.md"), 4, "Owner/Tool", None, "App$special.zip"),
+        ])
+
+    def test_missing_link_suggests_exact_case_or_similar_asset(self):
+        github = Mock()
+        github.release.return_value = Release("v2", frozenset({
+            "App-Windows-v2.zip", "App-Linux-v2.zip", "different.zip",
+        }))
+        file = Path("README.md")
+        wrong_case = Link(file, 1, "Owner/Tool", None, "app-windows-v2.zip")
+        old_name = Link(file, 2, "Owner/Tool", None, "App-Windows-v1.zip")
+        status, message = validate(wrong_case, github, {})
+        self.assertEqual(status, "MISSING")
+        self.assertTrue(message.endswith("Similar uploaded names: 'App-Windows-v2.zip'"))
+        status, message = validate(old_name, github, {})
+        self.assertEqual(status, "MISSING")
+        self.assertIn("'App-Windows-v2.zip'", message)
+        self.assertNotIn("different.zip", message)
+
+    def test_annotation_escapes_filename_and_message(self):
+        file = Path("docs") / "one,100%.md"
+        link = Link(file, 3, "Owner/Tool", None, "App.zip")
+        output = StringIO()
+        with contextlib.redirect_stdout(output):
+            annotate(link, "MISSING", "Title\nwith %")
+        self.assertEqual(
+            output.getvalue(),
+            "::error file=docs/one%2C100%25.md,line=3,title=Release link missing::Title%0Awith %25\n",
+        )
+
 
 class GitHubTests(unittest.TestCase):
     def test_pagination_state_and_cache(self):
@@ -64,6 +104,32 @@ class GitHubTests(unittest.TestCase):
         request = Request("https://api.github.com/repos/owner/tool/releases/latest")
         with self.assertRaises(CheckError):
             GitHubRedirect().redirect_request(request, None, 302, "", {}, "https://example.org")
+
+    def test_draft_lookup_does_not_leak_into_pinned_lookup_cache(self):
+        github = GitHub("token")
+        github.get = Mock(side_effect=[
+            ReleaseNotFound(),
+            [{"id": 123, "tag_name": "draft/v2", "draft": True}],
+            [{"name": "app.zip", "state": "uploaded"}],
+            ReleaseNotFound(),
+        ])
+        result = github.release("Owner/Tool", "tags/draft%2Fv2", include_drafts=True)
+        self.assertEqual(result, Release("draft/v2", frozenset({"app.zip"})))
+        with self.assertRaises(ReleaseNotFound):
+            github.release("Owner/Tool", "tags/draft%2Fv2")
+        self.assertEqual(github.get.call_args_list, [
+            call("/repos/owner/tool/releases/tags/draft%2Fv2"),
+            call("/repos/owner/tool/releases?per_page=100&page=1"),
+            call("/repos/owner/tool/releases/123/assets?per_page=100&page=1"),
+            call("/repos/owner/tool/releases/tags/draft%2Fv2"),
+        ])
+
+    def test_missing_draft_tag_tells_unauthenticated_user_how_to_continue(self):
+        github = GitHub()
+        github.get = Mock(side_effect=ReleaseNotFound())
+        with self.assertRaisesRegex(CheckError, "set GH_TOKEN or GITHUB_TOKEN"):
+            github.release("Owner/Tool", "tags/draft", include_drafts=True)
+        github.get.assert_called_once()
 
 
 class CliTests(unittest.TestCase):
@@ -105,6 +171,31 @@ class CliTests(unittest.TestCase):
         )
         self.assertEqual(code, 2)
         self.assertIn("No latest download links", output)
+
+    def test_default_readme_and_bare_candidate_tag(self):
+        cwd = Path.cwd()
+        with TemporaryDirectory() as folder:
+            try:
+                os.chdir(folder)
+                Path("README.md").write_text(
+                    "https://github.com/Owner/Tool/releases/latest/download/App.zip",
+                    encoding="utf-8",
+                )
+                with patch("release_link_check.GitHub") as github, contextlib.redirect_stdout(StringIO()):
+                    github.return_value.release.return_value = Release("v2", frozenset({"App.zip"}))
+                    self.assertEqual(main(["--candidate-tag", "v2"]), 0)
+                github.return_value.release.assert_called_once_with("Owner/Tool", "tags/v2", include_drafts=True)
+            finally:
+                os.chdir(cwd)
+
+    def test_bare_candidate_tag_requires_single_latest_repo(self):
+        text = "\n".join([
+            "https://github.com/Owner/Tool/releases/latest/download/App.zip",
+            "https://github.com/Else/Tool/releases/latest/download/App.zip",
+        ])
+        with self.assertRaises(SystemExit) as error:
+            self.run_cli(text, None, ["--candidate-tag", "v2"])
+        self.assertEqual(error.exception.code, 2)
 
 
 if __name__ == "__main__":

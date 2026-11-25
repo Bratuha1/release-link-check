@@ -7,16 +7,26 @@ inputs:
   files:
     description: Paths to UTF-8 files, one per line
     default: README.md
+  candidate-tag:
+    description: Optional TAG or OWNER/REPO=TAG to check instead of the latest release
+    default: ''
 runs:
   using: composite
   steps:
     - shell: bash
       env:
         RELEASE_LINK_CHECK_FILES: ${{ inputs.files }}
+        RELEASE_LINK_CHECK_CANDIDATE_TAG: ${{ inputs.candidate-tag }}
+        RELEASE_LINK_CHECK_DEFAULT_TOKEN: ${{ github.token }}
       run: |
+        export GITHUB_TOKEN="${GITHUB_TOKEN:-$RELEASE_LINK_CHECK_DEFAULT_TOKEN}"
+        options=(--github-annotations)
+        if [[ -n "$RELEASE_LINK_CHECK_CANDIDATE_TAG" ]]; then
+          options+=(--candidate-tag "$RELEASE_LINK_CHECK_CANDIDATE_TAG")
+        fi
         files=()
         while IFS= read -r file; do
           file="${file%$'\r'}"
           if [[ -n "$file" ]]; then files+=("$file"); fi
         done <<< "$RELEASE_LINK_CHECK_FILES"
-        python "$GITHUB_ACTION_PATH/release_link_check.py" -- "${files[@]}"
+        python "$GITHUB_ACTION_PATH/release_link_check.py" "${options[@]}" -- "${files[@]}"

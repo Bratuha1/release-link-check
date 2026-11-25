@@ -1,19 +1,35 @@
 # Release Link Check
 
-Утилита находит прямые ссылки на файлы GitHub Releases в README, документации и командах установки. Если в релизе нет файла с таким именем, она укажет строку со ссылкой и вернёт ненулевой код. Для ссылок вида `latest/download` можно проверить черновик будущего релиза.
+Проверка кнопок **«Скачать»** на GitHub для авторов программ. Например, кнопка в README просит скачать `app-windows-v1.zip`, а в новой версии загружен только `app-windows-v2.zip`. Утилита покажет строку со старой ссылкой и подскажет имя загруженного файла.
 
 [Скачать скрипт](https://github.com/Bratuha1/release-link-check/releases/latest/download/release_link_check.py)
 
-Нужен Python 3.10 или новее.
+## Проверить страницу проекта
+
+Положите скачанный скрипт рядом с `README.md` и выполните команду из этой папки. Нужен Python 3.10 или новее.
 
 ```powershell
-python release_link_check.py README.md
+python release_link_check.py
 ```
 
-Чтобы проверить черновик, укажите его числовой ID и задайте `GH_TOKEN` или `GITHUB_TOKEN` с доступом к этому релизу.
+Команда проверит `README.md`. Можно явно указать другие файлы: `python release_link_check.py README.md docs/install.md`.
+
+## Проверить черновик релиза
+
+Загрузите файлы в черновик и укажите его тег. Для чтения черновика нужен `GH_TOKEN` или `GITHUB_TOKEN` с доступом к нему.
 
 ```powershell
-python release_link_check.py README.md --candidate OWNER/REPO=123456789
+python release_link_check.py --candidate-tag v2.0.0
 ```
 
-Утилита запрашивает метаданные GitHub API. Файлы релиза она не скачивает. Для подключения к CI есть [пример GitHub Actions](../README.md#run-in-github-actions).
+Если ссылки на последнюю версию ведут в разные репозитории, укажите нужный явно: `--candidate-tag OWNER/REPO=v2.0.0`. Ссылки на конкретные старые версии по-прежнему проверяются по своим тегам.
+
+## Подключить к GitHub Actions
+
+Добавьте шаг после checkout. Ошибка появится рядом с нужной строкой прямо в GitHub.
+
+```yaml
+- uses: Bratuha1/release-link-check@v0.2.0
+```
+
+[Готовый файл для GitHub Actions и пример для нескольких файлов](../README.md#run-in-github-actions)
