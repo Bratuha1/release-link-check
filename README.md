@@ -48,13 +48,13 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: '3.13'
-      - uses: Bratuha1/release-link-check@v0.2.0
+      - uses: Bratuha1/release-link-check@v0.3.0
 ```
 
 The default is `README.md`. To check other files, pass one path per line:
 
 ```yaml
-- uses: Bratuha1/release-link-check@v0.2.0
+- uses: Bratuha1/release-link-check@v0.3.0
   with:
     files: |
       README.md
@@ -62,6 +62,26 @@ The default is `README.md`. To check other files, pass one path per line:
 ```
 
 The action uses the workflow token by default. Set `GH_TOKEN` on the step when it needs a different token, for example to see a draft that the workflow token cannot access.
+
+## Check your build before uploading
+
+Point the checker at the folder containing the files you are about to upload. This mode works offline and takes no token.
+
+```sh
+python release_link_check.py --local-release "OWNER/REPO@v2.0.0=dist"
+```
+
+The checker counts links for that repo that point to `latest/download` or the specified tag. Omit `@v2.0.0` to check only `latest/download`. Links to other repos or old tags are counted as outside the local release. Use the folder with the final filenames. Subfolders are skipped.
+
+You can run this immediately after building the release files in GitHub Actions:
+
+```yaml
+- uses: Bratuha1/release-link-check@v0.3.0
+  with:
+    local-release: ${{ github.repository }}@${{ github.ref_name }}=dist
+```
+
+Use this example in a workflow triggered by a release tag, after the build step writes its files to `dist`.
 
 ## Check a draft before publishing
 

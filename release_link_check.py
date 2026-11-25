@@ -14,7 +14,7 @@ from urllib.parse import quote, unquote, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
 
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 API_HOST = "api.github.com"
 REPO_PATTERN = r"[A-Za-z0-9-]+/(?!\.{1,2}(?:/|$))[A-Za-z0-9_.-]+"
 DOWNLOAD_URL = re.compile(
@@ -37,6 +37,16 @@ class Link:
 class Release:
     tag: str
     assets: frozenset[str]
+
+
+@dataclass(frozen=True)
+class LocalRelease:
+    repo: str
+    tag: str | None
+    directory: Path
+
+    def matches(self, link):
+        return link.repo.lower() == self.repo and (link.tag is None or link.tag == self.tag)
 
 
 def find_links(file, text):
@@ -183,6 +193,16 @@ def parse_candidate_tag(value):
     return repo.lower() if repo else None, tag
 
 
+def parse_local_release(value):
+    target, equals, directory = value.partition("=")
+    repo, at, tag = target.partition("@")
+    if not equals or not directory or not re.fullmatch(REPO_PATTERN, repo):
+        raise argparse.ArgumentTypeError("expected OWNER/REPO[@TAG]=DIRECTORY")
+    if at:
+        _, tag = parse_candidate_tag(tag)
+    return LocalRelease(repo.lower(), tag or None, Path(directory))
+
+
 def suggested_names(filename, assets):
     expected = filename.casefold()
     case_matches = sorted(asset for asset in assets if asset.casefold() == expected)
@@ -212,15 +232,20 @@ def validate(link, github, candidates, candidate_tags=None):
             release = github.release(link.repo, candidate_id or target)
     except CheckError as error:
         return "ERROR", f"{link.repo} {context}: {error}"
-    details = f"{ascii(link.filename)} in {link.repo} {ascii(release.tag)}"
-    if link.filename in release.assets:
+    return check_asset(link.filename, release.assets, f"{link.repo} {ascii(release.tag)}")
+
+
+def check_asset(filename, assets, location, *, local=False):
+    details = f"{ascii(filename)} in {location}"
+    if filename in assets:
         return "OK", details
-    names = suggested_names(link.filename, release.assets)
+    names = suggested_names(filename, assets)
     if names:
-        details += f". Similar uploaded names: {', '.join(map(ascii, names))}"
-    elif not release.assets:
-        details += ". This release has no uploaded files"
-    else:
+        source = "local" if local else "uploaded"
+        details += f". Similar {source} names: {', '.join(map(ascii, names))}"
+    elif not assets:
+        details += ". No files found in the local folder" if local else ". This release has no uploaded files"
+    elif not local:
         details += ". Check the release for the exact asset name"
     return "MISSING", details
 
@@ -249,9 +274,15 @@ def main(argv=None):
         metavar="[OWNER/REPO=]TAG",
         help="resolve latest links against a release or visible draft with this tag",
     )
+    parser.add_argument(
+        "--local-release", type=parse_local_release, metavar="OWNER/REPO[@TAG]=DIRECTORY",
+        help="check intended download links against the files in a local release folder, without network access",
+    )
     parser.add_argument("--github-annotations", action="store_true", help="annotate bad links in GitHub Actions")
     parser.add_argument("--version", action="version", version=VERSION)
     args = parser.parse_args(argv)
+    if args.local_release and (args.candidate or args.candidate_tag):
+        parser.error("--local-release cannot be combined with --candidate or --candidate-tag")
     candidates = dict(args.candidate)
     if len(candidates) != len(args.candidate):
         parser.error("give at most one candidate per repository")
@@ -266,6 +297,8 @@ def main(argv=None):
     if not links:
         print("ERROR No supported GitHub release download URLs found. Use literal URLs, without shell variables.", file=sys.stderr)
         return 2
+    if args.local_release:
+        return check_local_release(links, args.local_release, args.github_annotations)
 
     latest_repos = {link.repo.lower() for link in links if link.tag is None}
     candidate_tags = {}
@@ -283,16 +316,50 @@ def main(argv=None):
         return 2
 
     github = GitHub(os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN"))
+    return print_results(
+        ((link, validate(link, github, candidates, candidate_tags)) for link in links),
+        args.github_annotations,
+    )
+
+
+def check_local_release(links, local_release, annotations):
+    selected = [link for link in links if local_release.matches(link)]
+    if not selected:
+        print(
+            f"ERROR No links match the local release for {local_release.repo}. "
+            "Use OWNER/REPO@TAG for links pinned to a tag.",
+            file=sys.stderr,
+        )
+        return 2
+    directory = local_release.directory
+    try:
+        assets = {entry.name for entry in directory.iterdir() if entry.is_file()}
+    except OSError as error:
+        print(f"ERROR Could not read local release folder {directory}: {error}", file=sys.stderr)
+        return 2
+    location = f"local folder {ascii(directory.as_posix())}"
+    return print_results(
+        ((link, check_asset(link.filename, assets, location, local=True)) for link in selected),
+        annotations,
+        skipped=len(links) - len(selected),
+    )
+
+
+def print_results(results, annotations, *, skipped=0):
+    passed = 0
     missing = errors = 0
-    for link in links:
-        status, message = validate(link, github, candidates, candidate_tags)
+    for link, (status, message) in results:
         print(f"{link.file}:{link.line}: {status} {message}")
-        if args.github_annotations and status != "OK":
+        if annotations and status != "OK":
             annotate(link, status, message)
+        passed += status == "OK"
         missing += status == "MISSING"
         errors += status == "ERROR"
-    passed = len(links) - missing - errors
-    print(f"{len(links)} link(s): {passed} OK, {missing} missing, {errors} error(s)")
+    checked = passed + missing + errors
+    summary = f"{checked} link(s): {passed} OK, {missing} missing, {errors} error(s)"
+    if skipped:
+        summary += f", {skipped} outside local release"
+    print(summary)
     return 2 if errors else int(missing > 0)
 
 

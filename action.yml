@@ -10,6 +10,9 @@ inputs:
   candidate-tag:
     description: Optional TAG or OWNER/REPO=TAG to check instead of the latest release
     default: ''
+  local-release:
+    description: Optional OWNER/REPO[@TAG]=DIRECTORY to check local files without using the API
+    default: ''
 runs:
   using: composite
   steps:
@@ -17,12 +20,16 @@ runs:
       env:
         RELEASE_LINK_CHECK_FILES: ${{ inputs.files }}
         RELEASE_LINK_CHECK_CANDIDATE_TAG: ${{ inputs.candidate-tag }}
+        RELEASE_LINK_CHECK_LOCAL_RELEASE: ${{ inputs.local-release }}
         RELEASE_LINK_CHECK_DEFAULT_TOKEN: ${{ github.token }}
       run: |
         export GITHUB_TOKEN="${GITHUB_TOKEN:-$RELEASE_LINK_CHECK_DEFAULT_TOKEN}"
         options=(--github-annotations)
         if [[ -n "$RELEASE_LINK_CHECK_CANDIDATE_TAG" ]]; then
           options+=(--candidate-tag "$RELEASE_LINK_CHECK_CANDIDATE_TAG")
+        fi
+        if [[ -n "$RELEASE_LINK_CHECK_LOCAL_RELEASE" ]]; then
+          options+=(--local-release "$RELEASE_LINK_CHECK_LOCAL_RELEASE")
         fi
         files=()
         while IFS= read -r file; do

@@ -39,3 +39,12 @@ jobs:
             README.md
             docs/ru.md
             tests/published-link.txt
+      - name: Create a local release fixture
+        shell: bash
+        run: |
+          mkdir -p "fixture dist"
+          touch "fixture dist/PeripheralBatteryTray-1.0.0-windows-x64-portable.zip"
+      - uses: ./
+        with:
+          files: tests/published-link.txt
+          local-release: Bratuha1/peripheral-battery-tray@v1.0.0=fixture dist

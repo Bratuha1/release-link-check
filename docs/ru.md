@@ -14,6 +14,16 @@ python release_link_check.py
 
 Команда проверит `README.md`. Можно явно указать другие файлы: `python release_link_check.py README.md docs/install.md`.
 
+## Проверить готовые файлы до загрузки на GitHub
+
+Если сборка уже в папке `dist`, можно проверить будущие ссылки без интернета и токена:
+
+```powershell
+python release_link_check.py --local-release "OWNER/REPO@v2.0.0=dist"
+```
+
+Подставьте свой репозиторий и тег. Утилита сверит имена файлов для ссылок на этот тег и на последнюю версию. Если тег не указывать, она проверит только ссылки на последнюю версию. Файлы должны лежать прямо в указанной папке. Ссылки на другие репозитории и теги будут пропущены.
+
 ## Проверить черновик релиза
 
 Загрузите файлы в черновик и укажите его тег. Для чтения черновика нужен `GH_TOKEN` или `GITHUB_TOKEN` с доступом к нему.
@@ -29,7 +39,7 @@ python release_link_check.py --candidate-tag v2.0.0
 Добавьте шаг после checkout. Ошибка появится рядом с нужной строкой прямо в GitHub.
 
 ```yaml
-- uses: Bratuha1/release-link-check@v0.2.0
+- uses: Bratuha1/release-link-check@v0.3.0
 ```
 
 [Готовый файл для GitHub Actions и пример для нескольких файлов](../README.md#run-in-github-actions)

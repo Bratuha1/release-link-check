@@ -197,6 +197,50 @@ class CliTests(unittest.TestCase):
             self.run_cli(text, None, ["--candidate-tag", "v2"])
         self.assertEqual(error.exception.code, 2)
 
+    def test_local_release_checks_latest_and_selected_tag_without_api(self):
+        with TemporaryDirectory() as folder:
+            dist = Path(folder) / "build output=windows"
+            dist.mkdir()
+            (dist / "App.zip").touch()
+            (dist / "Docs.zip").mkdir()
+            (dist / "Docs.zip" / "Docs.zip").touch()
+            readme = Path(folder) / "README.md"
+            readme.write_text("\n".join([
+                "https://github.com/Owner/Tool/releases/latest/download/App.zip",
+                "https://github.com/Owner/Tool/releases/download/next/v2/App.zip",
+                "https://github.com/Owner/Tool/releases/download/v1/App.zip",
+                "https://github.com/Another/Tool/releases/latest/download/App.zip",
+                "https://github.com/Owner/Tool/releases/latest/download/Docs.zip",
+                "https://github.com/Owner/Tool/releases/latest/download/app.zip",
+            ]), encoding="utf-8")
+            output = StringIO()
+            with patch("release_link_check.GitHub") as github, contextlib.redirect_stdout(output):
+                code = main(["--local-release", f"owner/tool@next/v2={dist}", str(readme)])
+            github.assert_not_called()
+            self.assertEqual(code, 1)
+            report = output.getvalue()
+            self.assertIn(":1: OK", report)
+            self.assertIn(":2: OK", report)
+            self.assertNotIn(":3:", report)
+            self.assertNotIn(":4:", report)
+            self.assertIn(":5: MISSING", report)
+            self.assertIn("Similar local names: 'App.zip'", report)
+            self.assertIn("4 link(s): 2 OK, 2 missing, 0 error(s), 2 outside local release", report)
+
+    def test_local_release_no_matching_links_or_missing_folder(self):
+        with TemporaryDirectory() as folder:
+            readme = Path(folder) / "README.md"
+            readme.write_text(
+                "https://github.com/Owner/Tool/releases/download/v1/App.zip",
+                encoding="utf-8",
+            )
+            output = StringIO()
+            with contextlib.redirect_stderr(output):
+                self.assertEqual(main([str(readme), "--local-release", f"Owner/Tool={folder}"]), 2)
+                self.assertEqual(main([str(readme), "--local-release", f"Owner/Tool@v1={folder}/missing"]), 2)
+            self.assertIn("No links match the local release", output.getvalue())
+            self.assertIn("Could not read local release folder", output.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()
